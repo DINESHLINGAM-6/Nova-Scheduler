@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: nova-scheduler-db
+    environment:
+      POSTGRES_DB: nova_scheduler
+      POSTGRES_USER: nova_user
+      POSTGRES_PASSWORD: nova_password
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U nova_user -d nova_scheduler']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local

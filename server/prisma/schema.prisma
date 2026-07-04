@@ -1,0 +1,418 @@
+// ============================================
+// Nova-Scheduler — Prisma Schema
+// ============================================
+// 12-table relational schema for distributed job scheduling
+// 
+// Hierarchy: User → Organization → Project → Queue → Job
+// Supporting: RetryPolicy, JobExecution, JobLog, ScheduledJob,
+//             Worker, WorkerHeartbeat, DeadLetterQueue
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// 1. USERS — Authentication & RBAC
+// ============================================
+model User {
+  id            String       @id @default(uuid())
+  email         String       @unique
+  password      String       // bcrypt hashed
+  name          String
+  role          UserRole     @default(MEMBER)
+  
+  // Relations
+  organizationId String?     @map("organization_id")
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  
+  createdProjects Project[]  @relation("ProjectCreator")
+  
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+
+  @@index([email])
+  @@index([organizationId])
+  @@map("users")
+}
+
+enum UserRole {
+  ADMIN
+  MEMBER
+}
+
+// ============================================
+// 2. ORGANIZATIONS — Multi-tenant grouping
+// ============================================
+model Organization {
+  id            String       @id @default(uuid())
+  name          String
+  slug          String       @unique // URL-friendly identifier
+  
+  // Relations
+  users         User[]
+  projects      Project[]
+  
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+
+  @@index([slug])
+  @@map("organizations")
+}
+
+// ============================================
+// 3. PROJECTS — Organization-scoped containers
+// ============================================
+model Project {
+  id            String       @id @default(uuid())
+  name          String
+  description   String?
+  
+  // Relations
+  organizationId String     @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  
+  createdById   String       @map("created_by_id")
+  createdBy     User         @relation("ProjectCreator", fields: [createdById], references: [id])
+  
+  queues        Queue[]
+  
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+
+  @@unique([organizationId, name]) // No duplicate names within an org
+  @@index([organizationId])
+  @@map("projects")
+}
+
+// ============================================
+// 4. RETRY POLICIES — Configurable retry strategies
+// ============================================
+// Supports: FIXED, LINEAR, EXPONENTIAL backoff
+// Formula (Exponential): delay = baseDelay × (backoffMultiplier ^ attempt) + jitter
+// Formula (Linear):      delay = baseDelay × attempt
+// Formula (Fixed):       delay = baseDelay
+model RetryPolicy {
+  id               String            @id @default(uuid())
+  name             String            // e.g., "aggressive-retry", "gentle-backoff"
+  type             RetryStrategyType @default(EXPONENTIAL)
+  maxAttempts      Int               @default(3) @map("max_attempts")
+  baseDelayMs      Int               @default(1000) @map("base_delay_ms")
+  maxDelayMs       Int               @default(300000) @map("max_delay_ms") // 5 min max
+  backoffMultiplier Float            @default(2.0) @map("backoff_multiplier")
+  
+  // Relations
+  queues           Queue[]
+  
+  createdAt        DateTime          @default(now()) @map("created_at")
+
+  @@map("retry_policies")
+}
+
+enum RetryStrategyType {
+  FIXED
+  LINEAR
+  EXPONENTIAL
+}
+
+// ============================================
+// 5. QUEUES — Job queue configuration
+// ============================================
+// Each queue belongs to a project and has its own concurrency,
+// rate limiting, retry policy, and pause/resume capability.
+model Queue {
+  id               String       @id @default(uuid())
+  name             String
+  description      String?
+  
+  // Configuration
+  concurrencyLimit Int          @default(5) @map("concurrency_limit")
+  maxRatePerMinute Int?         @map("max_rate_per_minute") // Rate limiting
+  isPaused         Boolean      @default(false) @map("is_paused")
+  
+  // Relations
+  projectId        String       @map("project_id")
+  project          Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  
+  retryPolicyId    String?      @map("retry_policy_id")
+  retryPolicy      RetryPolicy? @relation(fields: [retryPolicyId], references: [id], onDelete: SetNull)
+  
+  jobs             Job[]
+  deadLetterEntries DeadLetterQueue[]
+  
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
+
+  @@unique([projectId, name]) // No duplicate queue names within a project
+  @@index([projectId])
+  @@index([isPaused])
+  @@map("queues")
+}
+
+// ============================================
+// 6. JOBS — Core job entity
+// ============================================
+// Supports: IMMEDIATE, DELAYED, SCHEDULED, RECURRING, BATCH
+// Lifecycle: QUEUED → SCHEDULED → CLAIMED → RUNNING → COMPLETED/FAILED
+// Concurrency: locked_by + locked_at for optimistic locking (SELECT FOR UPDATE SKIP LOCKED)
+model Job {
+  id               String       @id @default(uuid())
+  name             String
+  type             JobType      @default(IMMEDIATE)
+  payload          Json         // Job-specific data (HTTP, Email, Shell, etc.)
+  
+  // Status & Lifecycle
+  status           JobStatus    @default(QUEUED)
+  priority         Int          @default(3) // 1=Critical, 5=Minimal
+  
+  // Retry tracking
+  maxRetries       Int          @default(3) @map("max_retries")
+  retryCount       Int          @default(0) @map("retry_count")
+  
+  // Scheduling
+  scheduledAt      DateTime?    @map("scheduled_at") // For DELAYED jobs
+  cronExpression   String?      @map("cron_expression") // For RECURRING jobs
+  batchId          String?      @map("batch_id") // Group batch jobs
+  timeoutMs        Int          @default(30000) @map("timeout_ms")
+  
+  // Concurrency control (optimistic locking)
+  lockedBy         String?      @map("locked_by") // worker_id that claimed it
+  lockedAt         DateTime?    @map("locked_at")
+  
+  // Lifecycle timestamps
+  startedAt        DateTime?    @map("started_at")
+  completedAt      DateTime?    @map("completed_at")
+  failedAt         DateTime?    @map("failed_at")
+  
+  // Relations
+  queueId          String       @map("queue_id")
+  queue            Queue        @relation(fields: [queueId], references: [id], onDelete: Cascade)
+  
+  executions       JobExecution[]
+  logs             JobLog[]
+  scheduledJob     ScheduledJob?
+  deadLetterEntry  DeadLetterQueue?
+  
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
+
+  // Performance indexes
+  @@index([queueId, status, priority]) // Queue polling: find highest priority pending jobs
+  @@index([status])                     // Filter by status
+  @@index([type])                       // Filter by type
+  @@index([batchId])                    // Group batch jobs
+  @@index([scheduledAt])                // Find due scheduled jobs
+  @@index([lockedBy])                   // Find jobs locked by a worker
+  @@index([createdAt])                  // Sort by creation time
+  @@map("jobs")
+}
+
+enum JobType {
+  IMMEDIATE
+  DELAYED
+  SCHEDULED
+  RECURRING
+  BATCH
+}
+
+enum JobStatus {
+  QUEUED
+  SCHEDULED
+  CLAIMED
+  RUNNING
+  COMPLETED
+  FAILED
+  RETRYING
+  CANCELLED
+  TIMED_OUT
+}
+
+// ============================================
+// 7. JOB EXECUTIONS — Per-attempt execution records
+// ============================================
+// Each execution attempt gets its own record for full audit trail.
+// A job with 3 retries will have 4 execution records.
+model JobExecution {
+  id               String              @id @default(uuid())
+  attempt          Int                 // 1-based attempt number
+  status           JobExecutionStatus  @default(RUNNING)
+  
+  // Timing
+  startedAt        DateTime            @default(now()) @map("started_at")
+  completedAt      DateTime?           @map("completed_at")
+  durationMs       Int?                @map("duration_ms")
+  
+  // Result
+  result           Json?               // Success result data
+  error            String?             // Error message if failed
+  errorStack       String?             @map("error_stack")
+  
+  // Relations
+  jobId            String              @map("job_id")
+  job              Job                 @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  
+  workerId         String?             @map("worker_id")
+  worker           Worker?             @relation(fields: [workerId], references: [id], onDelete: SetNull)
+  
+  logs             JobLog[]
+  
+  createdAt        DateTime            @default(now()) @map("created_at")
+
+  @@index([jobId])
+  @@index([workerId])
+  @@index([status])
+  @@map("job_executions")
+}
+
+enum JobExecutionStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+  TIMED_OUT
+}
+
+// ============================================
+// 8. JOB LOGS — Structured execution logs
+// ============================================
+model JobLog {
+  id               String       @id @default(uuid())
+  level            LogLevel     @default(INFO)
+  message          String
+  metadata         Json?        // Additional structured data
+  
+  // Relations
+  jobId            String       @map("job_id")
+  job              Job          @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  
+  executionId      String?      @map("execution_id")
+  execution        JobExecution? @relation(fields: [executionId], references: [id], onDelete: Cascade)
+  
+  timestamp        DateTime     @default(now())
+
+  @@index([jobId])
+  @@index([executionId])
+  @@index([timestamp])
+  @@map("job_logs")
+}
+
+enum LogLevel {
+  DEBUG
+  INFO
+  WARN
+  ERROR
+}
+
+// ============================================
+// 9. SCHEDULED JOBS — Cron/recurring metadata
+// ============================================
+model ScheduledJob {
+  id               String       @id @default(uuid())
+  cronExpression   String       @map("cron_expression")
+  timezone         String       @default("UTC")
+  
+  // Scheduling state
+  nextRunAt        DateTime?    @map("next_run_at")
+  lastRunAt        DateTime?    @map("last_run_at")
+  isActive         Boolean      @default(true) @map("is_active")
+  runCount         Int          @default(0) @map("run_count")
+  
+  // Relations
+  jobId            String       @unique @map("job_id")
+  job              Job          @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
+
+  @@index([nextRunAt, isActive])
+  @@map("scheduled_jobs")
+}
+
+// ============================================
+// 10. DEAD LETTER QUEUE — Permanently failed jobs
+// ============================================
+// Jobs that exhaust all retries are moved here for manual inspection.
+// Can be retried or purged by administrators.
+model DeadLetterQueue {
+  id               String       @id @default(uuid())
+  reason           String       // Why it was moved to DLQ
+  lastError        String?      @map("last_error")
+  originalPayload  Json         @map("original_payload")
+  retryCount       Int          @map("retry_count") // How many retries were attempted
+  
+  // Relations
+  originalJobId    String       @unique @map("original_job_id")
+  originalJob      Job          @relation(fields: [originalJobId], references: [id], onDelete: Cascade)
+  
+  queueId          String       @map("queue_id")
+  queue            Queue        @relation(fields: [queueId], references: [id], onDelete: Cascade)
+  
+  failedAt         DateTime     @default(now()) @map("failed_at")
+  createdAt        DateTime     @default(now()) @map("created_at")
+
+  @@index([queueId])
+  @@index([failedAt])
+  @@map("dead_letter_queue")
+}
+
+// ============================================
+// 11. WORKERS — Worker registration & status
+// ============================================
+model Worker {
+  id               String       @id @default(uuid())
+  name             String       @unique
+  status           WorkerStatus @default(IDLE)
+  
+  // Worker capabilities
+  hostname         String?
+  pid              Int?         // Process ID
+  concurrency      Int          @default(5) // Max concurrent jobs this worker handles
+  queues           Json?        // Array of queue IDs this worker is subscribed to
+  
+  // Health
+  lastHeartbeat    DateTime?    @map("last_heartbeat")
+  startedAt        DateTime     @default(now()) @map("started_at")
+  
+  // Relations
+  heartbeats       WorkerHeartbeat[]
+  executions       JobExecution[]
+  
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@index([lastHeartbeat])
+  @@map("workers")
+}
+
+enum WorkerStatus {
+  IDLE
+  BUSY
+  DRAINING  // Finishing current jobs, not accepting new ones
+  OFFLINE
+}
+
+// ============================================
+// 12. WORKER HEARTBEATS — Periodic health signals
+// ============================================
+model WorkerHeartbeat {
+  id               String       @id @default(uuid())
+  
+  // Resource metrics
+  activeJobs       Int          @default(0) @map("active_jobs")
+  cpuUsage         Float?       @map("cpu_usage")
+  memoryUsage      Float?       @map("memory_usage") // MB
+  status           WorkerStatus @default(IDLE)
+  
+  // Relations
+  workerId         String       @map("worker_id")
+  worker           Worker       @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  
+  timestamp        DateTime     @default(now())
+
+  @@index([workerId, timestamp])
+  @@map("worker_heartbeats")
+}
