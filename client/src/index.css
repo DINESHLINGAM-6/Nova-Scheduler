@@ -4,36 +4,36 @@
 
 @layer base {
   :root {
-    --background: 224 71% 4%;
-    --foreground: 213 31% 91%;
+    --background: 228 80% 3%;
+    --foreground: 210 40% 98%;
 
-    --muted: 223 47% 11%;
-    --muted-foreground: 215.4 16.3% 56.9%;
+    --muted: 224 71% 8%;
+    --muted-foreground: 217.9 10.6% 64.9%;
 
-    --popover: 224 71% 4%;
-    --popover-foreground: 213 31% 91%;
+    --popover: 228 80% 3%;
+    --popover-foreground: 210 40% 98%;
 
-    --border: 216 34% 17%;
-    --input: 216 34% 17%;
+    --border: 224 71% 12%;
+    --input: 224 71% 12%;
 
-    --card: 222 47% 7%;
-    --card-foreground: 213 31% 91%;
+    --card: 228 60% 5%;
+    --card-foreground: 210 40% 98%;
 
-    --primary: 210 100% 50%;
-    --primary-foreground: 222.2 47.4% 11.2%;
+    --primary: 195 100% 50%;
+    --primary-foreground: 228 80% 3%;
 
-    --secondary: 222.2 47.4% 11.2%;
+    --secondary: 260 100% 60%;
     --secondary-foreground: 210 40% 98%;
 
-    --accent: 216 34% 17%;
+    --accent: 224 71% 12%;
     --accent-foreground: 210 40% 98%;
 
-    --destructive: 0 63% 31%;
+    --destructive: 346 100% 55%;
     --destructive-foreground: 210 40% 98%;
 
-    --ring: 212.7 26.8% 83.9%;
+    --ring: 195 100% 50%;
 
-    --radius: 0.75rem;
+    --radius: 1rem;
   }
 }
 
@@ -43,16 +43,36 @@
   }
   body {
     @apply bg-background text-foreground antialiased selection:bg-primary selection:text-primary-foreground;
-    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   }
+  code, pre, .font-mono {
+    font-family: 'JetBrains Mono', SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
+  }
+}
+
+/* Background patterns */
+.bg-mesh {
+  background-color: #020308;
+  background-image: 
+    radial-gradient(at 0% 0%, hsla(253,16%,7%,1) 0, transparent 50%), 
+    radial-gradient(at 50% 0%, hsla(225,39%,10%,1) 0, transparent 50%), 
+    radial-gradient(at 100% 0%, hsla(263,40%,10%,1) 0, transparent 50%),
+    radial-gradient(at 50% 100%, hsla(195,50%,8%,1) 0, transparent 50%);
+}
+
+.cyber-grid {
+  background-size: 40px 40px;
+  background-image: 
+    linear-gradient(to right, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
 }
 
 /* Glassmorphism utility */
 .glass {
-  background: rgba(10, 15, 30, 0.7);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(8, 10, 24, 0.65);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 .glass-hover {

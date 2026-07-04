@@ -53,8 +53,8 @@ export const App: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#05070f]">
-        <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+      <div className="min-h-screen flex items-center justify-center bg-mesh cyber-grid">
+        <div className="w-10 h-10 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin glow-primary" />
       </div>
     );
   }
@@ -83,7 +83,11 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="flex bg-[#05070f] text-slate-100 min-h-screen">
+    <div className="flex bg-mesh cyber-grid text-slate-100 min-h-screen relative overflow-hidden">
+      {/* Background glow effects */}
+      <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-cyan-500/10 rounded-full blur-[120px] pointer-events-none" />
+      <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-purple-500/10 rounded-full blur-[120px] pointer-events-none" />
+      
       {/* Sidebar navigation */}
       <Sidebar
         currentTab={currentTab}
