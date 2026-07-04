@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+/client/node_modules/
+/server/node_modules/
+
+# Production Build outputs
+dist/
+/client/dist/
+/server/dist/
+
+# Env & local configs
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+/server/.env
+/client/.env
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Test coverage
+coverage/
+/server/coverage/
+
+# IDEs and Editors
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS files
+.DS_Store
+Thumbs.db

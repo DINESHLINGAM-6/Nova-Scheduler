@@ -12,7 +12,7 @@ const config: Config = {
     '^@shared/(.*)$': '<rootDir>/src/shared/$1',
     '^@socket/(.*)$': '<rootDir>/src/socket/$1',
   },
-  setupFilesAfterSetup: ['<rootDir>/tests/setup.ts'],
+  setupFilesAfterEnv: ['<rootDir>/tests/setup.ts'],
   collectCoverageFrom: [
     'src/**/*.ts',
     '!src/server.ts',
